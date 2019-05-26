@@ -1,0 +1,9 @@
+[package]
+name = "xmpp"
+version = "0.1.0"
+authors = ["Abe Kohandel"]
+edition = "2018"
+
+[dependencies]
+trust-dns = "0.16"
+trust-dns-resolver = "0.11"
