@@ -8,7 +8,7 @@ use trust_dns::rr::{DNSClass, Name, RData, RecordType};
 use trust_dns::udp::UdpClientConnection;
 use trust_dns_resolver::system_conf;
 
-/// A trait use for any connection.
+/// A trait used for any connection.
 pub trait Connection: Read + Write + Debug {
     fn close(&mut self) -> Result<()>;
 }
@@ -42,7 +42,7 @@ impl ConnectionConfig {
     /// let conn_config = ConnectionConfig::new()
     ///                     .with_domain(Name::from_str("jabber.de").unwrap());
     /// ```
-    /// [`Name`]: ../struct.Mame.html
+    /// [`Name`]: ../struct.Name.html
     /// [`ConnectionConfig`]: struct.ConnectionConfig.html
     pub fn with_domain(mut self, name: Name) -> Self {
         self.endpoint = Some(ConnectionEndpoint::Domain(name));
@@ -51,7 +51,7 @@ impl ConnectionConfig {
 
     /// Create a [`ConnectionConfig`] based on host [`Name`] and port. This
     /// should be use when automatic DNS SRV lookup is not desired. The
-    /// connection will be created against the IP address retruned by a DNS
+    /// connection will be created against the IP address returned by a DNS
     /// AAAA or A lookup.
     ///
     /// # Example
@@ -63,7 +63,7 @@ impl ConnectionConfig {
     ///                     .with_host(Name::from_str("jabber.de").unwrap(),
     ///                                5222);
     /// ```
-    /// [`Name`]: ../struct.Mame.html
+    /// [`Name`]: ../struct.Name.html
     /// [`ConnectionConfig`]: struct.ConnectionConfig.html
     pub fn with_host(mut self, name: Name, port: u16) -> Self {
         self.endpoint = Some(ConnectionEndpoint::Host(name, port));
@@ -181,11 +181,14 @@ impl TcpConnection {
     }
 
     fn new_from_host(name: &Name, port: u16) -> Result<Box<Connection>> {
+        // Perform the DNS AAAA (IPv6) lookup and attempt to connect to
+        // the returned resources
         if let Ok(records) = TcpConnection::execute_lookup(name, RecordType::AAAA) {
-            for record in records {
+            for record in &records {
                 if let RData::AAAA(ip) = record {
+                    // Return the first successful connection
                     if let Ok(conn) = TcpConnection::new_from_addr(SocketAddr::from(
-                        SocketAddrV6::new(ip, port, 0, 0),
+                        SocketAddrV6::new(*ip, port, 0, 0),
                     )) {
                         return Ok(conn);
                     }
@@ -193,11 +196,14 @@ impl TcpConnection {
             }
         }
 
+        // Perform the DNS A (IPv4) lookup and attempt to connect to
+        // the returned resources
         if let Ok(records) = TcpConnection::execute_lookup(name, RecordType::A) {
-            for record in records {
+            for record in &records {
                 if let RData::A(ip) = record {
+                    // Return the first successful connection
                     if let Ok(conn) =
-                        TcpConnection::new_from_addr(SocketAddr::from(SocketAddrV4::new(ip, port)))
+                        TcpConnection::new_from_addr(SocketAddr::from(SocketAddrV4::new(*ip, port)))
                     {
                         return Ok(conn);
                     }
@@ -209,13 +215,22 @@ impl TcpConnection {
     }
 
     fn new_from_domain(name: &Name) -> Result<Box<Connection>> {
-        let fqdn = Name::from_str("_xmpp-client._tcp")
+        // Construct the DNS SRV query
+        let query = Name::from_str("_xmpp-client._tcp")
             .unwrap()
             .append_domain(name);
 
-        if let Ok(records) = TcpConnection::execute_lookup(&fqdn, RecordType::SRV) {
-            for record in records {
+        // Perform the DNS SRV lookup and attempt to connect to the returned resources
+        if let Ok(records) = TcpConnection::execute_lookup(&query, RecordType::SRV) {
+            for record in &records {
                 if let RData::SRV(srv) = record {
+                    // This condition "means that the service is decidedly not
+                    // available at this domain".
+                    if srv.target().is_root() && records.len() == 1 {
+                        return Err(Error::from(ErrorKind::NotConnected))
+                    }
+
+                    // Return the first successful connection
                     if let Ok(conn) = TcpConnection::new_from_host(srv.target(), srv.port()) {
                         return Ok(conn);
                     }
@@ -223,7 +238,8 @@ impl TcpConnection {
             }
         }
 
-        Err(Error::from(ErrorKind::NotConnected))
+        // Initiate the fallback process
+        TcpConnection::new_from_host(name, 5222)
     }
 
     fn execute_lookup(name: &Name, record_type: RecordType) -> Result<Vec<RData>> {
