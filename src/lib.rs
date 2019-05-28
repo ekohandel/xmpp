@@ -1,8 +1,6 @@
 pub mod connection;
-pub use connection::Connection;
+pub use connection::{Connection, ConnectionConfig, TcpConnection};
 
-pub mod connector;
-pub use connector::TcpConnector;
-
-pub mod client;
-pub use client::Client;
+pub use std::net::SocketAddr;
+pub use std::str::FromStr;
+pub use trust_dns::rr::Name;
